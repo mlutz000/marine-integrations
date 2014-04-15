@@ -44,11 +44,23 @@ class DostaLnWfpSioMuleParserDataParticleKey(BaseEnum):
 # *** Need to define data regex for this parser ***
 #DATA_REGEX = ''
 #DATA_MATCHER = re.compile(DATA_REGEX)
-DATA_WRAPPER_REGEX = b'\x00\x01\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00\x00\x01\x00\x01'
-DATA_WRAPPER_MATCHER = re.compile(DATA_WRAPPER_REGEX)
-DATA_REGEX = b'\x6e\x7f[\x00-\xFF]{32}([\x00-\xFF]+)([\x00-\xFF]{2})'
-DATA_MATCHER = re.compile(DATA_REGEX)
+#DATA_WRAPPER_REGEX = b'\x00\x01\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x01'
+#DATA_WRAPPER_MATCHER = re.compile(DATA_WRAPPER_REGEX)
+#DATA_REGEX = b'\x6e\x7f[\x00-\xFF]{32}([\x00-\xFF]+)([\x00-\xFF]{2})'
+#DATA_MATCHER = re.compile(DATA_REGEX)
 
+HEADER_REGEX = b'(\x00\x01\x00{5,5}\x01\x00{7,7}\x01)([\x00-\xff]{8,8})'
+HEADER_MATCHER = re.compile(HEADER_REGEX)
+
+STATUS_START_REGEX = b'\xff\xff\xff[\xfa-\xff]'
+STATUS_START_MATCHER = re.compile(STATUS_START_REGEX)
+
+PROFILE_REGEX = b'\xff\xff\xff[\xfa-\xff][\x00-\xff]{12}'
+PROFILE_MATCHER = re.compile(PROFILE_REGEX)
+
+HEADER_BYTES = 24
+SAMPLE_BYTES = 26
+STATUS_BYTES = 16
 
 
 class DostaLnWfpSioMuleParserDataParticle(DataParticle):
@@ -67,7 +79,7 @@ class DostaLnWfpSioMuleParserDataParticle(DataParticle):
         """
 	
         # match the data inside the wrapper
-        match = DATA_MATCHER.match(self.raw_data)
+        match = HEADER_MATCHER.match(self.raw_data)
         if not match:
             raise SampleException("DostaLnWfpSioMuleParserDataParticle: No regex match of \
                                   parsed sample data [%s]", self.raw_data)
@@ -99,7 +111,7 @@ class DostaLnWfpSioMuleParserDataParticle(DataParticle):
         return zulu_ts
 
 
-class DostaLnWfpSioMuleParser(BufferLoadingParser):
+class DostaLnWfpSioMuleParser(SioMuleParser):
 
     def __init__(self,
                  config,
@@ -120,26 +132,6 @@ class DostaLnWfpSioMuleParser(BufferLoadingParser):
                                           *args,
                                           **kwargs)
 
-    """
-    def set_state(self, state_obj):
-        """
-        Set the value of the state object for this parser
-        @param state_obj The object to set the state to. 
-        @throws DatasetParserException if there is a bad state structure
-        """
-        if not isinstance(state_obj, dict):
-            raise DatasetParserException("Invalid state structure")
-        self._timestamp = state_obj[StateKey.TIMESTAMP]
-        self._state = state_obj
-        self._read_state = state_obj
-
-    def _increment_state(self, increment):
-        """
-        Increment the parser state
-        @param timestamp The timestamp completed up to that position
-        """
-        self._read_state[StateKey.POSITION] += increment
-    """
 
     def parse_chunks(self):
         """
@@ -151,27 +143,36 @@ class DostaLnWfpSioMuleParser(BufferLoadingParser):
         """            
         result_particles = []
         (nd_timestamp, non_data, non_start, non_end) = self._chunker.get_next_non_data_with_index(clean=False)
-        (timestamp, chunk, start, end) = self._chunker.get_next_data_with_index(clean=True)
-        self.handle_non_data(non_data, non_end, start)
+        (timestamp, chunk, start, end) = self._chunker.get_next_data_with_index()
+
+        sample_count = 0
 
         while (chunk != None):
-             header_match = SIO_HEADER_MATCHER.match(chunk)
+            header_match = SIO_HEADER_MATCHER.match(chunk)
             sample_count = 0
             log.debug('parsing header %s', header_match.group(0)[1:32])
             if header_match.group(1) == self._instrument_id:
                 log.debug("matched chunk header %s", chunk[1:32])
 
-                print processed_match[1:32]
-                print ":".join("{:02x}".format(ord(c)) for c in processed_match[33:])
 
+		#print 'header'
+                #print header_match.group(0)[1:32]
+		#print 'chunk'
+                #print ":".join("{:02x}".format(ord(c)) for c in chunk[33:])
 
-                data_wrapper_match = DATA_WRAPPER_MATCHER.search(chunk)
+                data_wrapper_match = HEADER_MATCHER.search(chunk)
                 if data_wrapper_match:
-                    data_match = DATA_MATCHER.search(data_wrapper_match.group(1))
+		    
+		    #print 'data wrapper found'
+                    #print ":".join("{:02x}".format(ord(c)) for c in data_wrapper_match.group(0))
+		    
+                    data_match = self.we_sieve_function(chunk)
+		    
                     if data_match:
+			print 'FOO!'
                         log.debug('Found data match in chunk %s', chunk[1:32])
                         # pull out the date string from the data
-                        date_str = AdcpsParserDataParticle.unpack_date(data_match.group(0)[11:19])
+                        date_str = DostaLnWfpSioMuleParserDataParticle.unpack_date(data_match.group(0)[11:19])
                         # convert to ntp
                         converted_time = float(parser.parse(date_str).strftime("%s.%f"))
                         adjusted_time = converted_time - time.timezone
@@ -196,3 +197,29 @@ class DostaLnWfpSioMuleParser(BufferLoadingParser):
 
         return result_particles
 
+    def we_sieve_function(self, raw_data):
+        """
+        Sort through the raw data to identify new blocks of data that need processing.
+        This is needed instead of a regex because blocks are identified by position
+        in this binary file.
+        """
+        data_index = 0
+        return_list = []
+        raw_data_len = len(raw_data)
+
+        while data_index < raw_data_len:
+            # check if this is a status or data sample message
+            if STATUS_START_MATCHER.match(raw_data[data_index:data_index+4]):
+                return_list.append((data_index, data_index + STATUS_BYTES))
+                data_index += STATUS_BYTES
+            else:
+                return_list.append((data_index, data_index + SAMPLE_BYTES))
+                data_index += SAMPLE_BYTES
+
+            remain_bytes = raw_data_len - data_index
+            # if the remaining bytes are less than the data sample bytes, all we might have left is a status sample, if we don't we're done
+            if remain_bytes < STATUS_BYTES or (remain_bytes < SAMPLE_BYTES and remain_bytes >= STATUS_BYTES and \
+            not STATUS_START_MATCHER.match(raw_data[data_index:data_index+4])):
+                break
+        log.debug("returning sieve list %s", return_list)
+        return return_list
