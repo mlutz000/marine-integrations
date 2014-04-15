@@ -20,7 +20,6 @@ import time
 import datetime
 from dateutil import parser
 
-
 from mi.core.log import get_logger; log = get_logger()
 from mi.dataset.parser.sio_mule_common import SioMuleParser, SIO_HEADER_MATCHER
 from mi.core.common import BaseEnum
@@ -35,7 +34,7 @@ class DataParticleType(BaseEnum):
     SAMPLE = 'dosta_ln_wfp_sio_mule_parsed'
 
 
-class DostaLnWfpSioMuleParserDataParticleKey(BaseEnum):
+class DostaLnWfpSioMuleDataParticleKey(BaseEnum):
     OPTODE_OXYGEN='optode_oxygen'
     OPTODE_TEMPERATURE='optode_temperature'
  
@@ -58,8 +57,9 @@ STATUS_START_MATCHER = re.compile(STATUS_START_REGEX)
 PROFILE_REGEX = b'\xff\xff\xff[\xfa-\xff][\x00-\xff]{12}'
 PROFILE_MATCHER = re.compile(PROFILE_REGEX)
 
+SIO_HEADER_BYTES = 32
 HEADER_BYTES = 24
-SAMPLE_BYTES = 26
+E_GLOBAL_SAMPLE_BYTES = 30
 STATUS_BYTES = 16
 
 
@@ -78,37 +78,22 @@ class DostaLnWfpSioMuleParserDataParticle(DataParticle):
         @throws SampleException If there is a problem with sample creation
         """
 	
-        # match the data inside the wrapper
-        match = HEADER_MATCHER.match(self.raw_data)
-        if not match:
-            raise SampleException("DostaLnWfpSioMuleParserDataParticle: No regex match of \
-                                  parsed sample data [%s]", self.raw_data)
         try:
-            # placekeeper for now
-            fields = struct.unpack('<HHIBBBdHhhhIbBB', match.group(0)[0:34])
-            packet_id = fields[0]
-            num_bytes = fields[1]
+	    print 'GAAAA'
+            optode_oxygen = self.raw_data[12:15]
+            optode_temperature = self.raw_data[16:19]
 
         except (ValueError, TypeError, IndexError) as ex:
             raise SampleException("Error (%s) while decoding parameters in data: [%s]"
                                   % (ex, match.group(0)))
 
         result = [{DataParticleKey.VALUE_ID: DostaLnWfpSioMuleDataParticleKey.OPTODE_OXYGEN,
-                   DataParticleKey.VALUE: optode_ozygen},
+                   DataParticleKey.VALUE: optode_oxygen},
                   {DataParticleKey.VALUE_ID: DostaLnWfpSioMuleDataParticleKey.OPTODE_TEMPERATURE,
                    DataParticleKey.VALUE: optode_temperature},]
 
         log.debug('DostLnWfpSioMuleDataParticle: particle=%s', result)
         return result
-
-    @staticmethod
-    def unpack_date(data):
-        fields = struct.unpack('HBBBBBB', data)
-        log.debug('Unpacked data into date fields %s', fields)
-        zulu_ts = "%04d-%02d-%02dT%02d:%02d:%02d.%02dZ" % (
-            fields[0], fields[1], fields[2], fields[3],
-            fields[4], fields[5], fields[6])
-        return zulu_ts
 
 
 class DostaLnWfpSioMuleParser(SioMuleParser):
@@ -148,47 +133,45 @@ class DostaLnWfpSioMuleParser(SioMuleParser):
         sample_count = 0
 
         while (chunk != None):
-            header_match = SIO_HEADER_MATCHER.match(chunk)
+            sio_header_match = SIO_HEADER_MATCHER.match(chunk)
+	    
             sample_count = 0
-            log.debug('parsing header %s', header_match.group(0)[1:32])
-            if header_match.group(1) == self._instrument_id:
+            log.debug('parsing header %s', sio_header_match.group(0)[1:32])
+            if sio_header_match.group(1) == self._instrument_id:
                 log.debug("matched chunk header %s", chunk[1:32])
-
-
-		#print 'header'
-                #print header_match.group(0)[1:32]
-		#print 'chunk'
-                #print ":".join("{:02x}".format(ord(c)) for c in chunk[33:])
-
-                data_wrapper_match = HEADER_MATCHER.search(chunk)
+		
+                data_wrapper_match = HEADER_MATCHER.search(chunk)		
                 if data_wrapper_match:
 		    
-		    #print 'data wrapper found'
-                    #print ":".join("{:02x}".format(ord(c)) for c in data_wrapper_match.group(0))
+		    payload = chunk[SIO_HEADER_BYTES+HEADER_BYTES+1:]
+                    data_sieve = self.we_sieve_function(payload)
 		    
-                    data_match = self.we_sieve_function(chunk)
+                    if data_sieve:
+			
+			log.debug('Found data match in chunk %s', chunk[1:32])
+			print data_sieve
+						    
+			for ii in range(0,len(data_sieve)):    
+			    e_record = payload[data_sieve[ii][0]:data_sieve[ii][1]]
+			    # particle-ize the data block received, return the record
+			    
+			    print 'e_record'
+			    print ":".join("{:02x}".format(ord(c)) for c in e_record[0:])
 		    
-                    if data_match:
-			print 'FOO!'
-                        log.debug('Found data match in chunk %s', chunk[1:32])
-                        # pull out the date string from the data
-                        date_str = DostaLnWfpSioMuleParserDataParticle.unpack_date(data_match.group(0)[11:19])
-                        # convert to ntp
-                        converted_time = float(parser.parse(date_str).strftime("%s.%f"))
-                        adjusted_time = converted_time - time.timezone
-                        self._timestamp = ntplib.system_to_ntp_time(adjusted_time)
-                        # round to ensure the timestamps match
-                        self._timestamp = round(self._timestamp*100)/100
-                        log.debug("Converted time \"%s\" (unix: %10.9f) into %10.9f", date_str, adjusted_time, self._timestamp)
-                        # particle-ize the data block received, return the record
-                        sample = self._extract_sample(DostaLnWfpSioMuleParserDataParticle,
-                                                      DATA_MATCHER,
-                                                      data_match.group(0),
-                                                      self._timestamp)
-                        if sample:
-                            # create particle
-                            result_particles.append(sample)
-                            sample_count += 1
+		            fields = struct.unpack('<I', e_record[0:4])
+		            timestamp = int(fields[0])
+		            self._timestamp = ntplib.system_to_ntp_time(timestamp)
+			    print 'timestamp'
+			    print self._timestamp
+			    
+			    sample = self._extract_sample(DostaLnWfpSioMuleParserDataParticle,
+			                                  None,
+			                                  e_record,
+			                                  self._timestamp)
+			    if sample:
+			        # create particle
+			        result_particles.append(sample)
+			        sample_count += 1
 
             self._chunk_sample_count.append(sample_count)
 
@@ -213,13 +196,13 @@ class DostaLnWfpSioMuleParser(SioMuleParser):
                 return_list.append((data_index, data_index + STATUS_BYTES))
                 data_index += STATUS_BYTES
             else:
-                return_list.append((data_index, data_index + SAMPLE_BYTES))
-                data_index += SAMPLE_BYTES
+                return_list.append((data_index, data_index + E_GLOBAL_SAMPLE_BYTES))
+                data_index += E_GLOBAL_SAMPLE_BYTES
 
             remain_bytes = raw_data_len - data_index
             # if the remaining bytes are less than the data sample bytes, all we might have left is a status sample, if we don't we're done
-            if remain_bytes < STATUS_BYTES or (remain_bytes < SAMPLE_BYTES and remain_bytes >= STATUS_BYTES and \
+            if remain_bytes < STATUS_BYTES or (remain_bytes < E_GLOBAL_SAMPLE_BYTES and remain_bytes >= STATUS_BYTES and \
             not STATUS_START_MATCHER.match(raw_data[data_index:data_index+4])):
                 break
-        log.debug("returning sieve list %s", return_list)
+        log.debug("returning we sieve list %s", return_list)
         return return_list
