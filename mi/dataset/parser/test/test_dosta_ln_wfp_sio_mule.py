@@ -49,11 +49,11 @@ class DostaLnWfpSioParserUnitTestCase(ParserUnitTestCase):
             DataSetDriverConfigKeys.PARTICLE_CLASS: 'DostaLnWfpSioMuleParserDataParticle'
             }
 
-        self.timestamp1 = 3583725976.97
-        self.particle_a = DostaLnWfpSioMuleParserDataParticle(b'\x00\x01\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x01\x51\xf3' \
-            '\x37\xb2\x51\xf3\x38\x2d\x51\xf3\x38\x2d\x00\x00\x00\x00\x41\x3b' \
-            '\x67\xa1\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x38\x00\x62\x02\x3e',
-            internal_timestamp=self.timestamp1, new_sequence=True)
+        self.timestamp1 = 6503956095
+        self.particle_a = DostaLnWfpSioMuleParserDataParticle(b'\x51\xf2\x57\x2e\x00\x00\x00\x00\x41' \
+	    '\x39\x59\xb4\x00\x00\x00\x00\x00\x00\x00' \
+	    '\x00\x00\x00\x00\x00\x00\x39\x00\x65\x02\x3a',
+            internal_timestamp=self.timestamp1)
 	
         self.state_callback_value = None
         self.publish_callback_value = None
@@ -90,9 +90,13 @@ class DostaLnWfpSioParserUnitTestCase(ParserUnitTestCase):
 
         result = self.parser.get_records(1)
         self.assert_result(result,
-                           [[1447,1833,1,0],[3827,4214,1,0],[4471,4857,1,0]],
-                           [[0,32],[222,871],[1447,3058],[3248,4281],[4471,5000]], 
-                           self.timestamp1, self.particle_a)
+			   [[0, 2651], [2651, 2704], [2704, 2818], [2818, 2982], [2982, 3189], [3797, 3945],
+			    [3945, 4059], [7304, 7452], [7453, 7567], [7567, 7623], [7623, 7737],
+			    [7737, 7851], [7851, 7965], [12054, 12202], [12202, 12316], [16589, 16737],
+			    [16737, 16851], [16851, 16965], [16965, 17079], [17079, 17193], [17193, 17307],
+			    [17307, 17363]],
+			   [[3189, 3797], [4059, 7304], [7452, 7453], [7965, 12054], [12316, 16589]],
+			   self.timestamp1, self.particle_a)
 
 
         self.stream_handle.close()

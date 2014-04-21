@@ -39,15 +39,7 @@ class DostaLnWfpSioMuleDataParticleKey(BaseEnum):
     OPTODE_TEMPERATURE='optode_temperature'
  
 
-
 # *** Need to define data regex for this parser ***
-#DATA_REGEX = ''
-#DATA_MATCHER = re.compile(DATA_REGEX)
-#DATA_WRAPPER_REGEX = b'\x00\x01\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x01'
-#DATA_WRAPPER_MATCHER = re.compile(DATA_WRAPPER_REGEX)
-#DATA_REGEX = b'\x6e\x7f[\x00-\xFF]{32}([\x00-\xFF]+)([\x00-\xFF]{2})'
-#DATA_MATCHER = re.compile(DATA_REGEX)
-
 HEADER_REGEX = b'(\x00\x01\x00{5,5}\x01\x00{7,7}\x01)([\x00-\xff]{8,8})'
 HEADER_MATCHER = re.compile(HEADER_REGEX)
 
@@ -78,19 +70,19 @@ class DostaLnWfpSioMuleParserDataParticle(DataParticle):
         @throws SampleException If there is a problem with sample creation
         """
 	
-        try:
-	    print 'GAAAA'
-            optode_oxygen = self.raw_data[12:15]
-            optode_temperature = self.raw_data[16:19]
+	print ":".join("{:02x}".format(ord(c)) for c in self.raw_data)
+
+        try:	    
+            fields_prof = struct.unpack('>I f f f f f H H H',self.raw_data)
+            time_stamp = int(fields_prof[0])
 
         except (ValueError, TypeError, IndexError) as ex:
             raise SampleException("Error (%s) while decoding parameters in data: [%s]"
                                   % (ex, match.group(0)))
 
-        result = [{DataParticleKey.VALUE_ID: DostaLnWfpSioMuleDataParticleKey.OPTODE_OXYGEN,
-                   DataParticleKey.VALUE: optode_oxygen},
-                  {DataParticleKey.VALUE_ID: DostaLnWfpSioMuleDataParticleKey.OPTODE_TEMPERATURE,
-                   DataParticleKey.VALUE: optode_temperature},]
+        result = [self._encode_value(DostaLnWfpSioMuleDataParticleKey.OPTODE_OXYGEN, fields_prof[5], float),
+		  self._encode_value(DostaLnWfpSioMuleDataParticleKey.OPTODE_TEMPERATURE, fields_prof[6], float)]
+
 
         log.debug('DostLnWfpSioMuleDataParticle: particle=%s', result)
         return result
@@ -147,31 +139,24 @@ class DostaLnWfpSioMuleParser(SioMuleParser):
                     data_sieve = self.we_sieve_function(payload)
 		    
                     if data_sieve:
-			
 			log.debug('Found data match in chunk %s', chunk[1:32])
-			print data_sieve
-						    
 			for ii in range(0,len(data_sieve)):    
 			    e_record = payload[data_sieve[ii][0]:data_sieve[ii][1]]
 			    # particle-ize the data block received, return the record
-			    
-			    print 'e_record'
-			    print ":".join("{:02x}".format(ord(c)) for c in e_record[0:])
-		    
+			    		    
 		            fields = struct.unpack('<I', e_record[0:4])
 		            timestamp = int(fields[0])
 		            self._timestamp = ntplib.system_to_ntp_time(timestamp)
-			    print 'timestamp'
-			    print self._timestamp
 			    
-			    sample = self._extract_sample(DostaLnWfpSioMuleParserDataParticle,
-			                                  None,
-			                                  e_record,
-			                                  self._timestamp)
-			    if sample:
-			        # create particle
-			        result_particles.append(sample)
-			        sample_count += 1
+			    if len(e_record) == E_GLOBAL_SAMPLE_BYTES:
+			        sample = self._extract_sample(DostaLnWfpSioMuleParserDataParticle,
+			                                      None,
+			                                      e_record,
+			                                      self._timestamp)
+			        if sample:
+			            # create particle
+			            result_particles.append(sample)
+			            sample_count += 1
 
             self._chunk_sample_count.append(sample_count)
 
@@ -179,6 +164,7 @@ class DostaLnWfpSioMuleParser(SioMuleParser):
             (timestamp, chunk, start, end) = self._chunker.get_next_data_with_index()
 
         return result_particles
+
 
     def we_sieve_function(self, raw_data):
         """
