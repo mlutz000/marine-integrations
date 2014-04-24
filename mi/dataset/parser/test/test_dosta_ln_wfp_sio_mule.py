@@ -8,24 +8,30 @@
 """
 #!/usr/bin/env python
 
-import gevent
+import binascii
 import unittest
 import os
 from nose.plugins.attrib import attr
 
+from StringIO import StringIO
 from mi.core.log import get_logger ; log = get_logger()
+from mi.core.exceptions import SampleException
+from mi.core.instrument.data_particle import DataParticleKey
 
+from mi.core.log import get_logger ; log = get_logger()
 from mi.dataset.test.test_parser import ParserUnitTestCase
+from mi.dataset.dataset_driver import DataSetDriverConfigKeys
+from mi.core.instrument.data_particle import DataParticleKey
 from mi.dataset.parser.sio_mule_common import StateKey
 from mi.dataset.parser.dosta_ln_wfp_sio_mule import DostaLnWfpSioMuleParser
 from mi.dataset.parser.dosta_ln_wfp_sio_mule import DostaLnWfpSioMuleParserDataParticle
-from mi.dataset.dataset_driver import DataSetDriverConfigKeys
-from mi.core.instrument.data_particle import DataParticleKey
 
 from mi.idk.config import Config
+
 RESOURCE_PATH = os.path.join(Config().base_dir(), 'mi',
 			     'dataset', 'driver', 'dosta_ln',
 			     'wfp_sio_mule', 'resource')
+
 
 @attr('UNIT', group='mi')
 class DostaLnWfpSioParserUnitTestCase(ParserUnitTestCase):
@@ -49,19 +55,63 @@ class DostaLnWfpSioParserUnitTestCase(ParserUnitTestCase):
             DataSetDriverConfigKeys.PARTICLE_CLASS: 'DostaLnWfpSioMuleParserDataParticle'
             }
 
-        self.timestamp1 = 6503956095
-        self.particle_a = DostaLnWfpSioMuleParserDataParticle(b'\x51\xf2\x57\x2e\x00\x00\x00\x00\x41' \
-	    '\x39\x59\xb4\x00\x00\x00\x00\x00\x00\x00' \
-	    '\x00\x00\x00\x00\x00\x00\x39\x00\x65\x02\x3a',
-            internal_timestamp=self.timestamp1)
+	# First 'WE' SIO header in node58p1.dat, E file header.
+	self.particle_e_header = DostaLnWfpSioMuleParserDataParticle(b'\x00\x01\x00\x00\x00' \
+	    '\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x01Q\xf2V\xb3Q\xf2W.')
+
+	# First 'WE' SIO header in node58p1.dat, first record. 
+	self.timestamp_1a = 2986504401 #'Q\xf2W.' # record timestamp. need to convert this.
+	self.particle_1a = DostaLnWfpSioMuleParserDataParticle(b'Q\xf2W.\x00\x00\x00\x00A9Y' \
+	    '\xb4\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x009\x00e\x02:',
+	    internal_timestamp = self.timestamp_1a)
 	
-        self.state_callback_value = None
+	# First 'WE' SIO header in node58p1.dat, second record.
+	self.timestamp_1b = 4110643409 # 'Q\xf2Xq'
+	self.particle_1b = DostaLnWfpSioMuleParserDataParticle(b'Q\xf2XqB\x8f\x83DA5\x1e\xb8D' \
+	    '\xfd\x85qB\x82\x83\x12?\xf9\xba^\x009\x00d\x028',
+	    internal_timestamp = self.timestamp_1b)
+	
+	# First 'WE' SIO header in node58p1.dat, third record.
+	self.timestamp_1c  = 5754941649 #'Q\xf2Z\xd3'
+	self.particle_1c = DostaLnWfpSioMuleParserDataParticle(b'Q\xf2Z\xd3B\x84\x06GA2\x9a\xd4E' \
+	    '\t\xd3\xd7B\x9b\xdc)?\xec\xac\x08\x00:\x00d\x027',
+	    internal_timestamp = self.timestamp_1c)
+
+	# Second 'WE' SIO header in node58p1.dat, first record.
+	self.timestamp_1d  = 6216715986 #'Q\xf2Z\xd3'
+	self.particle_1d = DostaLnWfpSioMuleParserDataParticle(b'\x52\x10\xe1\xee\x00\x00\x00\x00\x41' \
+							       '\x3b\x69\x45\x00\x00\x00\x00\x00\x00\x00' \
+							       '\x00\x00\x00\x00\x00\x00\x3a\x00\x61\x02\x3d',
+	    internal_timestamp = self.timestamp_1d)
+
+	# Last 'WE' SIO header in node58p1.dat[0:3e5], last record.
+	self.timestamp_1l  = 6216715986 #'Q\xf2Z\xd3'
+	self.particle_1l = DostaLnWfpSioMuleParserDataParticle(b'\x52\x10\xfa\x79\x43\x34\x98\x0a\x41\x2e\xae\x7d' \
+							       '\x45\x81\x4a\x7b\x43\x13\xa6\x66\x3f\xc0\x62\x4e\x00' \
+							       '\x36\x00\x5f\x02\x3b',
+	    internal_timestamp = self.timestamp_1d)
+
+	# Last 'WE' SIO header in node58p1.dat[0:300000], second to last record.
+	self.timestamp_1k  = 4121071314 #'Q\xf2Z\xd3'
+	self.particle_1k = DostaLnWfpSioMuleParserDataParticle(b'\x52\x10\xf8\x71\x43\x30\x79\x49\x41\x2e\xe7\xd5\x45' \
+							       '\x79\xdb\x0a\x43\x12\x45\xa2\x3f\xc0\x00\x00\x00\x36' \
+							       '\x00\x61\x02\x3b',
+	    internal_timestamp = self.timestamp_1d)
+
+        self.file_ingested_value = None
+	self.state_callback_value = None
         self.publish_callback_value = None
         self.exception_callback_value = None
 
-    def assert_result(self, result, in_process_data, unprocessed_data, timestamp, particle):
+    def assert_result(self, result, particle):
+	log.debug("result: %s", result)
+	log.debug("particle: %s", particle)
+	log.debug("*********result: %s", binascii.hexlify(result[0].raw_data))
+	log.debug("*********particle: %s", binascii.hexlify(particle.raw_data))
+	
         self.assertEqual(result, [particle])
-        self.assert_state(in_process_data, unprocessed_data, timestamp)
+	
+        #self.assert_state(in_process_data, unprocessed_data, timestamp)
         self.assert_(isinstance(self.publish_callback_value, list))
         self.assertEqual(self.publish_callback_value[0], particle)
 
@@ -83,20 +133,102 @@ class DostaLnWfpSioParserUnitTestCase(ParserUnitTestCase):
         # NOTE: using the unprocessed data state of 0,5000 limits the file to reading
         # just 5000 bytes, so even though the file is longer it only reads the first
         # 5000
-        self.state = {StateKey.UNPROCESSED_DATA:[[0, 20000]],
+        self.state = {StateKey.UNPROCESSED_DATA:[[0, 300000]],
             StateKey.IN_PROCESS_DATA:[], StateKey.TIMESTAMP:0.0}
         self.parser = DostaLnWfpSioMuleParser(self.config, self.state, self.stream_handle,
                                   self.state_callback, self.pub_callback, self.exception_callback)
 
         result = self.parser.get_records(1)
-        self.assert_result(result,
-			   [[0, 2651], [2651, 2704], [2704, 2818], [2818, 2982], [2982, 3189], [3797, 3945],
-			    [3945, 4059], [7304, 7452], [7453, 7567], [7567, 7623], [7623, 7737],
-			    [7737, 7851], [7851, 7965], [12054, 12202], [12202, 12316], [16589, 16737],
-			    [16737, 16851], [16851, 16965], [16965, 17079], [17079, 17193], [17193, 17307],
-			    [17307, 17363]],
-			   [[3189, 3797], [4059, 7304], [7452, 7453], [7965, 12054], [12316, 16589]],
-			   self.timestamp1, self.particle_a)
+        self.assert_result(result, self.particle_1a)
 
+	result = self.parser.get_records(1)
+        self.assert_result(result, self.particle_1b)
 
+	result = self.parser.get_records(1)
+        self.assert_result(result, self.particle_1c)
+
+ 	result = self.parser.get_records(1)
+        self.assert_result(result, self.particle_1d)
+
+	self.stream_handle.close()
+	fail
+	
+    def test_get_many(self):
+        """
+        Read test data from the file and pull out multiple data particles at one time.
+        Assert that the results are those we expected.
+        """
+	pass
+        log.debug('Starting test_get_many')
+        self.state = {StateKey.UNPROCESSED_DATA:[[0, BYTES_TO_READ]],
+            StateKey.IN_PROCESS_DATA:[], StateKey.TIMESTAMP:0.0}
+        self.stream_handle = open(os.path.join(RESOURCE_PATH,
+                                               'node58p1.dat'))
+        self.parser = DostaLnWfpSioMuleParser(self.config, self.state, self.stream_handle,
+                                  self.state_callback, self.pub_callback, self.exception_callback) 
+
+        result = self.parser.get_records(4)
         self.stream_handle.close()
+        self.assertEqual(result,
+                         [self.particle_a, self.particle_b, self.particle_c, self.particle_d])
+        self.assert_state([],
+                        [[0,32],[222,871],[1833,3058],[3248,3827],[4214,4281],[4857,5000]],
+                        self.timestamp4)
+        self.assertEqual(self.publish_callback_value[0], self.particle_a)
+        self.assertEqual(self.publish_callback_value[1], self.particle_b)
+        self.assertEqual(self.publish_callback_value[2], self.particle_c)
+        self.assertEqual(self.publish_callback_value[3], self.particle_d)
+	
+
+    def test_long_stream(self):
+        """
+        Test a long stream 
+        """
+	pass
+        log.debug('Starting test_long_stream')
+        self.stream_handle = open(os.path.join(RESOURCE_PATH,
+                                               'node58p1.dat'))
+        data = self.stream_handle.read()
+        data_len = len(data)
+        self.stream_handle.seek(0)
+        self.state = {StateKey.UNPROCESSED_DATA:[[0, data_len]],
+            StateKey.IN_PROCESS_DATA:[], StateKey.TIMESTAMP:0.0}
+        self.parser = DostaLnWfpSioMuleParser(self.config, self.state, self.stream_handle,
+                                  self.state_callback, self.pub_callback, self.exception_callback)
+
+        result = self.parser.get_records(12)
+        self.stream_handle.close()
+        self.assertEqual(result[0], self.particle_a)
+        self.assertEqual(result[1], self.particle_b)
+        self.assertEqual(result[2], self.particle_c)
+        self.assertEqual(result[3], self.particle_d)
+        self.assertEqual(result[-2], self.particle_k)
+        self.assertEqual(result[-1], self.particle_l)
+        self.assert_state([],
+            [[0, 32], [222, 871], [1833, 3058], [3248, 3827], [4214, 4281],
+                [5047, 5153], [5539, 5730], [5786, 6433], [7009, 7396], [7586, 9200],
+                [14220, 14608], [15374, 15830], [16596, 17280], [17722, 17791], [19133, 22000]],
+            self.timestamp_l)
+        self.assertEqual(self.publish_callback_value[-2], self.particle_k)
+        self.assertEqual(self.publish_callback_value[-1], self.particle_l)
+        
+
+    def test_mid_state_start(self):
+        """
+        Test starting the parser in a state in the middle of processing
+        """
+        pass
+
+    def test_set_state(self):
+        """
+        Test changing to a new state after initializing the parser and 
+        reading data, as if new data has been found and the state has
+        changed
+        """
+        pass
+
+    def test_bad_data(self):
+        """
+        Ensure that bad data is skipped when it exists.
+        """
+        pass

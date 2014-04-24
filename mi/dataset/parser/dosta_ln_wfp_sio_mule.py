@@ -46,13 +46,11 @@ HEADER_MATCHER = re.compile(HEADER_REGEX)
 STATUS_START_REGEX = b'\xff\xff\xff[\xfa-\xff]'
 STATUS_START_MATCHER = re.compile(STATUS_START_REGEX)
 
-PROFILE_REGEX = b'\xff\xff\xff[\xfa-\xff][\x00-\xff]{12}'
-PROFILE_MATCHER = re.compile(PROFILE_REGEX)
-
 SIO_HEADER_BYTES = 32
 HEADER_BYTES = 24
 E_GLOBAL_SAMPLE_BYTES = 30
 STATUS_BYTES = 16
+STATUS_BYTES_AUGMENTED = 18
 
 
 class DostaLnWfpSioMuleParserDataParticle(DataParticle):
@@ -70,18 +68,32 @@ class DostaLnWfpSioMuleParserDataParticle(DataParticle):
         @throws SampleException If there is a problem with sample creation
         """
 	
-	print ":".join("{:02x}".format(ord(c)) for c in self.raw_data)
+	#print ":".join("{:02x}".format(ord(c)) for c in self.raw_data)
+	
+	if STATUS_START_MATCHER.match(self.raw_data):
+	    try:
+		fields_prof = struct.unpack('>I I L L',self.raw_data)		
+		# augmented would be
+		#fields_prof = struct.unpack('>I I L L I',self.raw_data)
+		#time_stamp = int(fields_prof[0])
+    
+		time_stamp = int(fields_prof[4])
+ 	
+	    except (ValueError, TypeError, IndexError) as ex:
+		raise SampleException("Error (%s) while decoding parameters in data: [%s]"
+				      % (ex, match.group(0)))
 
-        try:	    
-            fields_prof = struct.unpack('>I f f f f f H H H',self.raw_data)
-            time_stamp = int(fields_prof[0])
-
-        except (ValueError, TypeError, IndexError) as ex:
-            raise SampleException("Error (%s) while decoding parameters in data: [%s]"
-                                  % (ex, match.group(0)))
-
-        result = [self._encode_value(DostaLnWfpSioMuleDataParticleKey.OPTODE_OXYGEN, fields_prof[5], float),
-		  self._encode_value(DostaLnWfpSioMuleDataParticleKey.OPTODE_TEMPERATURE, fields_prof[6], float)]
+	else:
+	    try:	    
+		fields_prof = struct.unpack('>I f f f f f H H H',self.raw_data)
+		time_stamp = int(fields_prof[0])
+    
+	    except (ValueError, TypeError, IndexError) as ex:
+		raise SampleException("Error (%s) while decoding parameters in data: [%s]"
+				      % (ex, match.group(0)))
+    
+	    result = [self._encode_value(DostaLnWfpSioMuleDataParticleKey.OPTODE_OXYGEN, fields_prof[5], float),
+		      self._encode_value(DostaLnWfpSioMuleDataParticleKey.OPTODE_TEMPERATURE, fields_prof[6], float)]
 
 
         log.debug('DostLnWfpSioMuleDataParticle: particle=%s', result)
@@ -142,21 +154,29 @@ class DostaLnWfpSioMuleParser(SioMuleParser):
 			log.debug('Found data match in chunk %s', chunk[1:32])
 			for ii in range(0,len(data_sieve)):    
 			    e_record = payload[data_sieve[ii][0]:data_sieve[ii][1]]
+
 			    # particle-ize the data block received, return the record
-			    		    
-		            fields = struct.unpack('<I', e_record[0:4])
-		            timestamp = int(fields[0])
-		            self._timestamp = ntplib.system_to_ntp_time(timestamp)
-			    
-			    if len(e_record) == E_GLOBAL_SAMPLE_BYTES:
-			        sample = self._extract_sample(DostaLnWfpSioMuleParserDataParticle,
-			                                      None,
-			                                      e_record,
-			                                      self._timestamp)
-			        if sample:
-			            # create particle
-			            result_particles.append(sample)
-			            sample_count += 1
+			    		    			    
+			    if not STATUS_START_MATCHER.match(e_record[0:STATUS_BYTES]):
+				
+				print "+++++++++++++++++++++++"
+				print ":".join("{:02x}".format(ord(c)) for c in e_record)
+
+				fields = struct.unpack('<I', e_record[0:4])
+				timestamp = int(fields[0])
+				self._timestamp = ntplib.system_to_ntp_time(timestamp)
+				
+				print self._timestamp
+				
+				if len(e_record) == E_GLOBAL_SAMPLE_BYTES:
+				    sample = self._extract_sample(DostaLnWfpSioMuleParserDataParticle,
+								  None,
+								  e_record,
+								  self._timestamp)
+				    if sample:
+					# create particle
+					result_particles.append(sample)
+					sample_count += 1
 
             self._chunk_sample_count.append(sample_count)
 
@@ -179,6 +199,9 @@ class DostaLnWfpSioMuleParser(SioMuleParser):
         while data_index < raw_data_len:
             # check if this is a status or data sample message
             if STATUS_START_MATCHER.match(raw_data[data_index:data_index+4]):
+		# handle augmented status record
+		#
+		# else return unaug'd
                 return_list.append((data_index, data_index + STATUS_BYTES))
                 data_index += STATUS_BYTES
             else:
