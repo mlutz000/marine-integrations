@@ -117,7 +117,6 @@ class DostaLnWfpSioMuleParser(SioMuleParser):
                                           state_callback,
                                           publish_callback,
                                           exception_callback,
-                                          'WE',
                                           *args,
                                           **kwargs)
 
@@ -141,7 +140,7 @@ class DostaLnWfpSioMuleParser(SioMuleParser):
 	    
             sample_count = 0
             log.debug('parsing header %s', sio_header_match.group(0)[1:32])
-            if sio_header_match.group(1) == self._instrument_id:
+            if sio_header_match.group(1) == 'WE':
                 log.debug("matched chunk header %s", chunk[1:32])
 		
                 data_wrapper_match = HEADER_MATCHER.search(chunk)		
@@ -192,26 +191,77 @@ class DostaLnWfpSioMuleParser(SioMuleParser):
         This is needed instead of a regex because blocks are identified by position
         in this binary file.
         """
-        data_index = 0
+	
         return_list = []
         raw_data_len = len(raw_data)
+	
+	"""
+	Ok, there is a new issue with parsing these records.  The Status messages
+	can have an optional 2 bytes on the end, and since the rest of the data
+	is relatively unformated packed binary records, detecting the presence of
+	that optional 2 bytes can be difficult.  The only pattern we have to detect
+	is the STATUS_START field ( 4 bytes FF FF FF F[A-F] ).  So, we peel this
+	appart be parsing backwards, using the end-of-record as an additional anchor
+	point.
+	"""
+	
+	# '-1' to remove the '\x03' end-of-record marker
+	parse_end_point = raw_data_len - 1
+	
+	print ":".join("{:02x}".format(ord(c)) for c in raw_data)
 
-        while data_index < raw_data_len:
-            # check if this is a status or data sample message
-            if STATUS_START_MATCHER.match(raw_data[data_index:data_index+4]):
-		# handle augmented status record
-		#
-		# else return unaug'd
-                return_list.append((data_index, data_index + STATUS_BYTES))
-                data_index += STATUS_BYTES
+
+        while parse_end_point > 0:
+	    
+	    # look for a status message at postulated message header position
+	    
+	    header_start = STATUS_BYTES_AUGMENTED
+	    
+	    print parse_end_point
+	    # look for an augmented status
+	    
+	    print 'paugstat'
+	    print ":".join("{:02x}".format(ord(c)) for c in raw_data[parse_end_point-STATUS_BYTES_AUGMENTED:parse_end_point])
+	    print 'pstat'
+	    print ":".join("{:02x}".format(ord(c)) for c in raw_data[parse_end_point-STATUS_BYTES:parse_end_point])
+	    print 'paugsamp'
+	    print ":".join("{:02x}".format(ord(c)) for c in raw_data[parse_end_point-E_GLOBAL_SAMPLE_BYTES:parse_end_point])
+
+
+            if STATUS_START_MATCHER.match(raw_data[parse_end_point-STATUS_BYTES_AUGMENTED:parse_end_point]):
+		# A hit for the status message at the augmented offset
+		
+		print 'FOUND aug'
+		print ":".join("{:02x}".format(ord(c)) for c in raw_data[parse_end_point-STATUS_BYTES_AUGMENTED:parse_end_point])
+			       
+                return_list.append((parse_end_point-STATUS_BYTES_AUGMENTED, parse_end_point))
+                parse_end_point = parse_end_point-STATUS_BYTES_AUGMENTED 
+		
+            # check if this is a unaugmented status
+            elif STATUS_START_MATCHER.match(raw_data[parse_end_point-STATUS_BYTES:parse_end_point]):
+		# A hit for the status message at the augmented offset
+		
+		print 'FOUND stat'
+		print ":".join("{:02x}".format(ord(c)) for c in raw_data[parse_end_point-STATUS_BYTES:parse_end_point])
+
+                return_list.append((parse_end_point-STATUS_BYTES, parse_end_point))
+                parse_end_point = parse_end_point-STATUS_BYTES
+		
             else:
-                return_list.append((data_index, data_index + E_GLOBAL_SAMPLE_BYTES))
-                data_index += E_GLOBAL_SAMPLE_BYTES
-
-            remain_bytes = raw_data_len - data_index
+		
+		print 'FOUND sample'
+		print ":".join("{:02x}".format(ord(c)) for c in raw_data[parse_end_point-E_GLOBAL_SAMPLE_BYTES:parse_end_point])
+			       
+                return_list.append((parse_end_point-E_GLOBAL_SAMPLE_BYTES, parse_end_point))
+                parse_end_point = parse_end_point-E_GLOBAL_SAMPLE_BYTES
+ 
             # if the remaining bytes are less than the data sample bytes, all we might have left is a status sample, if we don't we're done
-            if remain_bytes < STATUS_BYTES or (remain_bytes < E_GLOBAL_SAMPLE_BYTES and remain_bytes >= STATUS_BYTES and \
-            not STATUS_START_MATCHER.match(raw_data[data_index:data_index+4])):
-                break
+            if parse_end_point != 0 and parse_end_point < STATUS_BYTES and parse_end_point < E_GLOBAL_SAMPLE_BYTES  and parse_end_point < STATUS_BYTES_AUGMENTED:
+		
+		print 'AAAAAAAAA'
+		#raise SampleException("Error (%s) while decoding parameters in data: [%s]"
+		#		      % (ex, ))
+	    
+	    
         log.debug("returning we sieve list %s", return_list)
         return return_list

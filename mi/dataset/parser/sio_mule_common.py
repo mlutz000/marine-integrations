@@ -342,8 +342,8 @@ class SioMuleParser(Parser):
 
             if data and len(self._record_buffer) < num_records:
                 # there is more data, add it to the chunker after escaping acoustic modem characters
-                data = data.replace(b'\x186b', b'\x2b')
-                data = data.replace(b'\x1858', b'\x18')
+                data = data.replace(b'\x18\x6b', b'\x2b')
+                data = data.replace(b'\x18\x58', b'\x18')
                 # there is more data, add it to the chunker
                 self._chunker.add_chunk(data, self._timestamp)
 
