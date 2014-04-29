@@ -68,21 +68,11 @@ class DostaLnWfpSioMuleParserDataParticle(DataParticle):
         @throws SampleException If there is a problem with sample creation
         """
 	
-	#print ":".join("{:02x}".format(ord(c)) for c in self.raw_data)
-	
-	if STATUS_START_MATCHER.match(self.raw_data):
-	    try:
-		fields_prof = struct.unpack('>I I L L',self.raw_data)		
-		# augmented would be
-		#fields_prof = struct.unpack('>I I L L I',self.raw_data)
-		#time_stamp = int(fields_prof[0])
-    
-		time_stamp = int(fields_prof[4])
- 	
-	    except (ValueError, TypeError, IndexError) as ex:
+	# NOTE: since we are dropping the status messages in the sieve, only
+	# sampes should make it here	
+	if len(self.raw_data) != E_GLOBAL_SAMPLE_BYTES:
 		raise SampleException("Error (%s) while decoding parameters in data: [%s]"
 				      % (ex, match.group(0)))
-
 	else:
 	    try:	    
 		fields_prof = struct.unpack('>I f f f f f H H H',self.raw_data)
@@ -127,17 +117,20 @@ class DostaLnWfpSioMuleParser(SioMuleParser):
         it is a valid data piece, build a particle, update the position and
         timestamp. Go until the chunker has no more valid data.
         @retval a list of tuples with sample particles encountered in this
-            parsing, plus the state. An empty list of nothing was parsed.
+            parsing, plus the state. An empty list if nothing was parsed.
         """            
         result_particles = []
         (nd_timestamp, non_data, non_start, non_end) = self._chunker.get_next_non_data_with_index(clean=False)
         (timestamp, chunk, start, end) = self._chunker.get_next_data_with_index()
 
         sample_count = 0
+	print chunk
+	log.debug('******************** parse_chunks')
 
         while (chunk != None):
             sio_header_match = SIO_HEADER_MATCHER.match(chunk)
 	    
+	    log.debug('******************** header match')
             sample_count = 0
             log.debug('parsing header %s', sio_header_match.group(0)[1:32])
             if sio_header_match.group(1) == 'WE':
@@ -154,24 +147,18 @@ class DostaLnWfpSioMuleParser(SioMuleParser):
 			for ii in range(0,len(data_sieve)):    
 			    e_record = payload[data_sieve[ii][0]:data_sieve[ii][1]]
 
-			    # particle-ize the data block received, return the record
-			    		    			    
+			    # particle-ize the data block received, return the record		    			    
 			    if not STATUS_START_MATCHER.match(e_record[0:STATUS_BYTES]):
 				
-				print "+++++++++++++++++++++++"
-				print ":".join("{:02x}".format(ord(c)) for c in e_record)
-
 				fields = struct.unpack('<I', e_record[0:4])
-				timestamp = int(fields[0])
-				self._timestamp = ntplib.system_to_ntp_time(timestamp)
-				
-				print self._timestamp
+				timestampS = float(fields[0])
+				timestamp = ntplib.system_to_ntp_time(timestampS)
 				
 				if len(e_record) == E_GLOBAL_SAMPLE_BYTES:
 				    sample = self._extract_sample(DostaLnWfpSioMuleParserDataParticle,
 								  None,
 								  e_record,
-								  self._timestamp)
+								  timestamp)
 				    if sample:
 					# create particle
 					result_particles.append(sample)
@@ -192,7 +179,7 @@ class DostaLnWfpSioMuleParser(SioMuleParser):
         in this binary file.
         """
 	
-        return_list = []
+        form_list = []
         raw_data_len = len(raw_data)
 	
 	"""
@@ -207,61 +194,41 @@ class DostaLnWfpSioMuleParser(SioMuleParser):
 	
 	# '-1' to remove the '\x03' end-of-record marker
 	parse_end_point = raw_data_len - 1
-	
-	print ":".join("{:02x}".format(ord(c)) for c in raw_data)
-
-
+	log.debug('******************** Sieve')
         while parse_end_point > 0:
 	    
 	    # look for a status message at postulated message header position
 	    
 	    header_start = STATUS_BYTES_AUGMENTED
 	    
-	    print parse_end_point
 	    # look for an augmented status
-	    
-	    print 'paugstat'
-	    print ":".join("{:02x}".format(ord(c)) for c in raw_data[parse_end_point-STATUS_BYTES_AUGMENTED:parse_end_point])
-	    print 'pstat'
-	    print ":".join("{:02x}".format(ord(c)) for c in raw_data[parse_end_point-STATUS_BYTES:parse_end_point])
-	    print 'paugsamp'
-	    print ":".join("{:02x}".format(ord(c)) for c in raw_data[parse_end_point-E_GLOBAL_SAMPLE_BYTES:parse_end_point])
-
-
             if STATUS_START_MATCHER.match(raw_data[parse_end_point-STATUS_BYTES_AUGMENTED:parse_end_point]):
 		# A hit for the status message at the augmented offset
-		
-		print 'FOUND aug'
-		print ":".join("{:02x}".format(ord(c)) for c in raw_data[parse_end_point-STATUS_BYTES_AUGMENTED:parse_end_point])
-			       
-                return_list.append((parse_end_point-STATUS_BYTES_AUGMENTED, parse_end_point))
+		# NOTE, we don't need the status messages, so we drop them on the floor here
+		# and only deliver a stream of samples to build_parse_values
+                #form_list.append((parse_end_point-STATUS_BYTES_AUGMENTED, parse_end_point))
                 parse_end_point = parse_end_point-STATUS_BYTES_AUGMENTED 
 		
             # check if this is a unaugmented status
             elif STATUS_START_MATCHER.match(raw_data[parse_end_point-STATUS_BYTES:parse_end_point]):
-		# A hit for the status message at the augmented offset
-		
-		print 'FOUND stat'
-		print ":".join("{:02x}".format(ord(c)) for c in raw_data[parse_end_point-STATUS_BYTES:parse_end_point])
-
-                return_list.append((parse_end_point-STATUS_BYTES, parse_end_point))
+		# A hit for the status message at the unaugmented offset
+		# NOTE: same as above
+                #form_list.append((parse_end_point-STATUS_BYTES, parse_end_point))
                 parse_end_point = parse_end_point-STATUS_BYTES
 		
             else:
-		
-		print 'FOUND sample'
-		print ":".join("{:02x}".format(ord(c)) for c in raw_data[parse_end_point-E_GLOBAL_SAMPLE_BYTES:parse_end_point])
-			       
-                return_list.append((parse_end_point-E_GLOBAL_SAMPLE_BYTES, parse_end_point))
+		# assume if not a stat that hit above, we have a sample.  If we missparse, we
+		# will end up with extra bytes when we finish, and sample_except at that point.
+                form_list.append((parse_end_point-E_GLOBAL_SAMPLE_BYTES, parse_end_point))
                 parse_end_point = parse_end_point-E_GLOBAL_SAMPLE_BYTES
  
             # if the remaining bytes are less than the data sample bytes, all we might have left is a status sample, if we don't we're done
             if parse_end_point != 0 and parse_end_point < STATUS_BYTES and parse_end_point < E_GLOBAL_SAMPLE_BYTES  and parse_end_point < STATUS_BYTES_AUGMENTED:
-		
-		print 'AAAAAAAAA'
-		#raise SampleException("Error (%s) while decoding parameters in data: [%s]"
-		#		      % (ex, ))
+		raise SampleException("Error (%s) while decoding parameters in data: [%s]"
+				      % (ex, ))
 	    
-	    
+	# since we parsed this backwards, we need to reverse to list to deliver the data in the correct order    
+	return_list = []    
+	return_list = form_list[::-1]    
         log.debug("returning we sieve list %s", return_list)
         return return_list
