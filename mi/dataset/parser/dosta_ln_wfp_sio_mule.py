@@ -124,17 +124,15 @@ class DostaLnWfpSioMuleParser(SioMuleParser):
         (timestamp, chunk, start, end) = self._chunker.get_next_data_with_index()
 
         sample_count = 0
-	print chunk
-	log.debug('******************** parse_chunks')
 
         while (chunk != None):
             sio_header_match = SIO_HEADER_MATCHER.match(chunk)
 	    
-	    log.debug('******************** header match')
             sample_count = 0
             log.debug('parsing header %s', sio_header_match.group(0)[1:32])
             if sio_header_match.group(1) == 'WE':
-                log.debug("matched chunk header %s", chunk[1:32])
+		
+                log.debug("matched chunk header %s", chunk[0:32])
 		
                 data_wrapper_match = HEADER_MATCHER.search(chunk)		
                 if data_wrapper_match:
@@ -194,7 +192,6 @@ class DostaLnWfpSioMuleParser(SioMuleParser):
 	
 	# '-1' to remove the '\x03' end-of-record marker
 	parse_end_point = raw_data_len - 1
-	log.debug('******************** Sieve')
         while parse_end_point > 0:
 	    
 	    # look for a status message at postulated message header position
@@ -207,6 +204,7 @@ class DostaLnWfpSioMuleParser(SioMuleParser):
 		# NOTE, we don't need the status messages, so we drop them on the floor here
 		# and only deliver a stream of samples to build_parse_values
                 #form_list.append((parse_end_point-STATUS_BYTES_AUGMENTED, parse_end_point))
+		print 'matched stat aug'
                 parse_end_point = parse_end_point-STATUS_BYTES_AUGMENTED 
 		
             # check if this is a unaugmented status
@@ -214,6 +212,7 @@ class DostaLnWfpSioMuleParser(SioMuleParser):
 		# A hit for the status message at the unaugmented offset
 		# NOTE: same as above
                 #form_list.append((parse_end_point-STATUS_BYTES, parse_end_point))
+		print 'matched stat'
                 parse_end_point = parse_end_point-STATUS_BYTES
 		
             else:
@@ -222,10 +221,10 @@ class DostaLnWfpSioMuleParser(SioMuleParser):
                 form_list.append((parse_end_point-E_GLOBAL_SAMPLE_BYTES, parse_end_point))
                 parse_end_point = parse_end_point-E_GLOBAL_SAMPLE_BYTES
  
+	    print parse_end_point
             # if the remaining bytes are less than the data sample bytes, all we might have left is a status sample, if we don't we're done
             if parse_end_point != 0 and parse_end_point < STATUS_BYTES and parse_end_point < E_GLOBAL_SAMPLE_BYTES  and parse_end_point < STATUS_BYTES_AUGMENTED:
-		raise SampleException("Error (%s) while decoding parameters in data: [%s]"
-				      % (ex, ))
+		raise SampleException("Error sieving WE data, inferred sample/status alignment incorrect")
 	    
 	# since we parsed this backwards, we need to reverse to list to deliver the data in the correct order    
 	return_list = []    

@@ -132,13 +132,14 @@ class DostaLnWfpSioParserUnitTestCase(ParserUnitTestCase):
         Read test data from the file and pull out data particles one at a time.
         Assert that the results are those we expected.
         """
+        log.debug('------------------------------------------------------Starting test_simple')
         self.stream_handle = open(os.path.join(RESOURCE_PATH,
                                                'node58p1.dat'))
         # NOTE: using the unprocessed data state of 0,5000 limits the file to reading
         # just 5000 bytes, so even though the file is longer it only reads the first
         # 5000
         self.state = {StateKey.UNPROCESSED_DATA:[[0, 5000]],
-            StateKey.IN_PROCESS_DATA:[], StateKey.TIMESTAMP:0.0}
+            StateKey.IN_PROCESS_DATA:[]}
         self.parser = DostaLnWfpSioMuleParser(self.config, self.state, self.stream_handle,
                                   self.state_callback, self.pub_callback, self.exception_callback)
 
@@ -171,9 +172,9 @@ class DostaLnWfpSioParserUnitTestCase(ParserUnitTestCase):
         """
             
         
-        log.debug('Starting test_get_many')
+        log.debug('--------------------------------------------------------Starting test_get_many')
         self.state = {StateKey.UNPROCESSED_DATA:[[0, 5000]],
-            StateKey.IN_PROCESS_DATA:[], StateKey.TIMESTAMP:0.0}
+            StateKey.IN_PROCESS_DATA:[]}
         self.stream_handle = open(os.path.join(RESOURCE_PATH,
                                                'node58p1.dat'))
         self.parser = DostaLnWfpSioMuleParser(self.config, self.state, self.stream_handle,
@@ -195,14 +196,14 @@ class DostaLnWfpSioParserUnitTestCase(ParserUnitTestCase):
         Test a long stream 
         """
 
-        log.debug('Starting test_long_stream')
+        log.debug('---------------------------------------------------------Starting test_long_stream')
         self.stream_handle = open(os.path.join(RESOURCE_PATH,
                                                'node58p1.dat'))
         data = self.stream_handle.read()
         data_len = len(data)
         self.stream_handle.seek(0)
         self.state = {StateKey.UNPROCESSED_DATA:[[0, 5000]],
-            StateKey.IN_PROCESS_DATA:[], StateKey.TIMESTAMP:0.0}
+            StateKey.IN_PROCESS_DATA:[]}
         self.parser = DostaLnWfpSioMuleParser(self.config, self.state, self.stream_handle,
                                   self.state_callback, self.pub_callback, self.exception_callback)
 
@@ -227,29 +228,68 @@ class DostaLnWfpSioParserUnitTestCase(ParserUnitTestCase):
         Test starting the parser in a state in the middle of processing
         """
 
-        log.debug('Starting test_mid_state_start')
-        #[2818:2982] contains the first WE SIO header
-        new_state = {StateKey.IN_PROCESS_DATA:[[2818,2982,3,1], [4059,4673,18,0]],
-            StateKey.UNPROCESSED_DATA:[[2818,2982], [4058,5000]], StateKey.TIMESTAMP:float(self.timestamp_m)}
+ 	log.debug('-----------------------------------------------------------Starting test_mid_state_start')
+        new_state = {StateKey.IN_PROCESS_DATA:[], StateKey.UNPROCESSED_DATA:[[2818,2982]]}
         self.stream_handle = open(os.path.join(RESOURCE_PATH, 'node58p1.dat'))
         self.parser = DostaLnWfpSioMuleParser(self.config, new_state, self.stream_handle,
-                        self.state_callback, self.pub_callback, self.exception_callback)
-        
+                                  self.state_callback, self.pub_callback, self.exception_callback)
         result = self.parser.get_records(1)
-        self.assert_result(result, [[2818,2982,3,2], [4059,4673,18,0]],
-                           [[2818,2982], [4058,5000]], self.particle_1b)
-        
+        self.assert_result(result, [[2818,2982,3,1]],
+                           [[2818,2982]], self.particle_1a)
         result = self.parser.get_records(1)
-        self.assert_result(result, [[4059,4673,18,0]],
-                           [[4058,5000]], self.particle_1c)
-        
+        self.assert_result(result, [[2818,2982,3,2]],
+                           [[2818,2982]], self.particle_1b)
+	result = self.parser.get_records(1)
+        self.assert_result(result, [], [], self.particle_1c)
+	
+	#result = self.parser.get_records(1)
+        #self.assert_result(result, [[4059,4673,18,1]], [[4058,5000]], self.particle_2a)
+	
         self.stream_handle.close()
+
+
+    def test_bad_data(self):
+        """
+        Ensure that the bad record ( in this case a currupted status message ) causes a sample exception
+        """
+	self.stream_handle = open(os.path.join(RESOURCE_PATH, 'node58p1_BADFLAGS.dat'))
+	self.state = {StateKey.UNPROCESSED_DATA:[[0, 5000]],
+	    StateKey.IN_PROCESS_DATA:[]}
+        log.debug('-------------------------------------------------------------Starting test_bad_data')
+        with self.assertRaises(SampleException):
+	    self.parser = DostaLnWfpSioMuleParser(self.config, self.state, self.stream_handle,
+                                  self.state_callback, self.pub_callback, self.exception_callback)
+            result = self.parser.get_records(1)
+
 
     def test_in_process_start(self):
         """
         test starting a parser with a state in the middle of processing
         """
-        pass
+        log.debug('-------------------------------------------------------------Starting test_in_process_start')
+        #[2818:2982] contains the first WE SIO header
+        new_state = {StateKey.IN_PROCESS_DATA:[[2818,2982,3,0], [4059,4673,18,0]],
+            StateKey.UNPROCESSED_DATA:[[2818,2982], [4058,5000]]}
+        self.stream_handle = open(os.path.join(RESOURCE_PATH, 'node58p1.dat'))
+        self.parser = DostaLnWfpSioMuleParser(self.config, new_state, self.stream_handle,
+                                  self.state_callback, self.pub_callback, self.exception_callback)
+        
+        result = self.parser.get_records(1)
+        self.assert_result(result, [[2818,2982,3,1], [4059,4673,18,0]],
+                           [[2818,2982], [4058,5000]], self.particle_1a) 
+        
+        result = self.parser.get_records(2)
+	self.assertEqual(result[0], self.particle_1b)
+        self.assertEqual(result[1], self.particle_1c)
+        self.assert_state([[4059,4673,18,0]], [[4058,5000]])
+        self.assertEqual(self.publish_callback_value[-1], self.particle_1c)
+	
+	#result = self.parser.get_records(1)
+        #self.assert_result(result, [[4059,4673,18,1]],
+        #                   [[4058,5000]], self.particle_2a) 
+	
+        self.stream_handle.close()     
+        
     
     def test_set_state(self):
         """
@@ -257,22 +297,43 @@ class DostaLnWfpSioParserUnitTestCase(ParserUnitTestCase):
         reading data, as if new data has been found and the state has
         changed
         """
-        pass
+        log.debug('-------------------------------------------------Starting test_set_state')
+        self.state = {StateKey.UNPROCESSED_DATA:[[4059, 4673]], StateKey.IN_PROCESS_DATA:[]}
+        new_state = {StateKey.UNPROCESSED_DATA:[[2818, 2982], [4058, 4059], [4673, 5000]],
+            StateKey.IN_PROCESS_DATA:[[2818, 2982, 3, 0]]}
 
-    def test_bad_data(self):
-        """
-        Ensure that bad data is skipped when it exists.
-        """
-        pass
+        self.stream_handle = open(os.path.join(RESOURCE_PATH,
+                                               'node58p1.dat'))
+        self.parser = DostaLnWfpSioMuleParser(self.config, self.state, self.stream_handle,
+                                  self.state_callback, self.pub_callback, self.exception_callback)
+        #
+	
+	# only 18 left in file at this point.  Drain them, and make sure the next fetch fails
+	result = self.parser.get_records(17)	
+        self.assert_state([[4059, 4673, 18, 17]],[[4059, 4673]])
+        result = self.parser.get_records(1)
+        result = self.parser.get_records(1)
+        self.assertEqual(result, [])      
+	
+        self.parser.set_state(new_state)
 
+        result = self.parser.get_records(1)
+        self.assert_result(result,
+                           [[2818, 2982, 3, 1]],
+                           [[2818, 2982], [4058, 4059], [4673, 5000]],
+                           self.particle_1a)
+        self.stream_handle.close()
+
+       
     def test_update(self):
         """
         Test a file which has had a section of data replaced by 0s, as if a block of data has not been received yet,
         then using the returned state make a new parser with the test data that has the 0s filled in
         """
 
+        log.debug('------------------------------------------------------Starting test_update')
         self.state = {StateKey.UNPROCESSED_DATA:[[0, 5000]],
-            StateKey.IN_PROCESS_DATA:[], StateKey.TIMESTAMP:0.0}
+            StateKey.IN_PROCESS_DATA:[]}
         # this file has first block of WE data replaced by 0s
         self.stream_handle = open(os.path.join(RESOURCE_PATH,
                                                'node58p1_1stWE0d.dat'))
@@ -280,7 +341,6 @@ class DostaLnWfpSioParserUnitTestCase(ParserUnitTestCase):
                                   self.state_callback, self.pub_callback, self.exception_callback)
 
         result = self.parser.get_records(1)
-
         self.assert_result(result,
                            [[4059,4673,18,1]],
                            [[2818, 2982], [4058, 5000]],
@@ -296,19 +356,26 @@ class DostaLnWfpSioParserUnitTestCase(ParserUnitTestCase):
 	
         # first get the old 'in process' records
         # Once those are done, the un processed data will be checked
-        result = self.parser.get_records(1)
  
+	
+	# there are 18 valid records in the second WE chunk.  We read one above, now we need
+	# to drain the remaining 17 to trigger the reparsing of the earlier block
+	for kk in range(0, 17):
+            result = self.parser.get_records(1)
+	
+	# so now, the next fetch should find the now-replaced earlier data    
+        result = self.parser.get_records(1)	
         self.assert_result(result,
-                           [[4059,4673,18,2]],
-                           [[4058,5000]],
+                           [[2818, 2982, 3, 1]],
+                           [[2818, 2982], [4058, 4059], [4673, 5000]],
                            self.particle_1a)
         
 	
         # this should be the first of the newly filled in particles from
         result = self.parser.get_records(1)
         self.assert_result(result,
-                           [[4059,4673,18,0]],
-                           [[4058,5000]],
+                           [[2818, 2982, 3, 2]],
+                           [[2818, 2982], [4058, 4059], [4673, 5000]],
                            self.particle_1b)
         self.stream_handle.close()
 

@@ -114,7 +114,7 @@ class Chunker(object):
             new_nondata_list.extend(result['non_data_chunk_list'])
             
             self.nondata_chunk_list = new_nondata_list
-            log.debug("Added chunk, data_chunk_list: %s, nondata_chunk_list: %s",
+            log.debug("Added a chunk, data_chunk_list: %s, nondata_chunk_list: %s",
                       self.data_chunk_list, self.nondata_chunk_list)
          
     def _generate_data_lists(self, timestamp, start_index=0):
